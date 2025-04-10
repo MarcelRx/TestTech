@@ -20,11 +20,11 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Install dotnet project dependencies
-        run: dotnet restore formbridge.sln  # Här pekar vi på root om lösningen är i root
+        run: dotnet restore formbridge/formbridge.sln  # Ändra här till korrekt sökväg
       - name: Build
-        run: dotnet build formbridge.sln  # Här pekar vi på root om lösningen är i root
+        run: dotnet build formbridge/formbridge.sln  # Ändra här till korrekt sökväg
       - name: Start Server
-        run: nohup dotnet run &  # Starta servern från root
+        run: nohup dotnet run --project formbridge/formbridge.csproj &  # Starta servern från formbridge mappen
       - name: Run API-Tests
         run: newman run ./api-test/Test.postman_collection.json
 
@@ -40,13 +40,13 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Install dotnet project dependencies
-        run: dotnet restore formbridge.sln  # Här pekar vi på root om lösningen är i root
+        run: dotnet restore formbridge/formbridge.sln  # Ändra här till korrekt sökväg
       - name: Build/Restore Playwright Project
         run: cd ShopTester.Tests && dotnet build
       - name: Ensure browsers are installed
         run: cd ShopTester.Tests && pwsh bin/Debug/net8.0/playwright.ps1 install --with-deps
       - name: Start server
-        run: nohup dotnet run &  # Starta servern från root
+        run: nohup dotnet run --project formbridge/formbridge.csproj &  # Starta servern från formbridge mappen
       - name: Run GUI-tests
         run: cd ShopTester.Tests && dotnet test
 
@@ -71,7 +71,7 @@ jobs:
             npm ci
             npm run build
             cd ../server
-            dotnet restore formbridge.sln  # Korrekt sökväg till lösningsfilen
+            dotnet restore formbridge/formbridge.sln  # Korrekt sökväg till lösningsfilen
             pm2 stop formbridge
             pm2 delete formbridge
-            pm2 start "dotnet run" --name formbridge
+            pm2 start "dotnet run --project formbridge/formbridge.csproj" --name formbridge
