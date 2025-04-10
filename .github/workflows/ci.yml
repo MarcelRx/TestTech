@@ -20,13 +20,11 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Install dotnet project dependencies
-        run: dotnet restore formbridge.sln  # Kontrollera rätt sökväg
+        run: dotnet restore formbridge.sln  # Här pekar vi på root om lösningen är i root
       - name: Build
-        run: dotnet build formbridge.sln  # Kontrollera rätt sökväg
+        run: dotnet build formbridge.sln  # Här pekar vi på root om lösningen är i root
       - name: Start Server
-        run: |
-          nohup dotnet run &  # Starta servern i bakgrunden
-          sleep 10  # Väntar på att servern ska starta
+        run: nohup dotnet run &  # Starta servern från root
       - name: Run API-Tests
         run: newman run ./api-test/Test.postman_collection.json
 
@@ -42,7 +40,7 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Install dotnet project dependencies
-        run: dotnet restore formbridge.sln  # Kontrollera rätt sökväg
+        run: dotnet restore formbridge.sln  # Här pekar vi på root om lösningen är i root
       - name: Build/Restore Playwright Project
         run: cd ShopTester.Tests && dotnet build
       - name: Ensure browsers are installed
@@ -77,4 +75,3 @@ jobs:
             pm2 stop formbridge
             pm2 delete formbridge
             pm2 start "dotnet run" --name formbridge
-
