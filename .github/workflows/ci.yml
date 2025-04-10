@@ -5,7 +5,6 @@ on:
     branches: ["main"]
 
 jobs:
-  # API-tester job
   api_tests:
     runs-on: ubuntu-latest
     steps:
@@ -21,18 +20,17 @@ jobs:
       - name: Install Newman
         run: npm install -g newman
       - name: Install dotnet project dependencies
-        run: dotnet restore
+        run: dotnet restore formbridge.sln  # Ingen cd-server här, direkt i root
       - name: Build
-        run: dotnet build
+        run: dotnet build formbridge.sln  # Ingen cd-server här, direkt i root
       - name: Start Server
-        run: cd server && nohup dotnet run &
+        run: nohup dotnet run &  # Starta servern från root
       - name: Run API-Tests
         run: newman run ./api-test/Test.postman_collection.json
 
-  # GUI-tester job
   gui_tests:
     runs-on: ubuntu-latest
-    needs: api_tests # Endast om API-testerna går igenom
+    needs: api_tests
     steps:
       - uses: actions/checkout@v4
       - name: Setup dotnet
@@ -40,43 +38,29 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Install dotnet project dependencies
-        run: dotnet restore
+        run: dotnet restore formbridge.sln  # Ingen cd-server här, direkt i root
       - name: Build/Restore Playwright Project
         run: cd ShopTester.Tests && dotnet build
       - name: Ensure browsers are installed
         run: cd ShopTester.Tests && pwsh bin/Debug/net8.0/playwright.ps1 install --with-deps
       - name: Start server
-        run: cd server && nohup dotnet run &
+        run: nohup dotnet run &  # Starta servern från root
       - name: Run GUI-tests
         run: cd ShopTester.Tests && dotnet test
 
-  # Deploy job
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
-    needs: [api_tests, gui_tests] # Endast om testerna är godkända
+    needs: [api_tests, gui_tests]  # Kör endast om alla tidigare tester är OK
     steps:
-      - name: Set up SSH key
-        uses: webfactory/ssh-agent@v0.5.3
-        with:
-          ssh-private-key: ${{ secrets.SSH_KEY }}  # Din privata SSH-nyckel
-
       - name: Deploy App
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.HOST }}        # T.ex. localhost eller din serveradress
-          username: ${{ secrets.USERNAME }} # T.ex. ditt användarnamn på servern
-          key: ${{ secrets.SSH_KEY }}      # Din SSH-nyckel
-          port: ${{ secrets.PORT }}        # Om du använder standard SSH-port (22), annars din serverport
-          script: |
-            # Sätt upp miljövariabler för databasanslutning
-            export DB_HOST=${{ secrets.HOST }}
-            export DB_PORT=${{ secrets.PORT }}
-            export DB_USERNAME=${{ secrets.USERNAME }}
-            export DB_PASSWORD=${{ secrets.PASSWORD }}
-            export DB_DATABASE=${{ secrets.DATABASE }}
-            
-            # Stäng av och starta om servern med de senaste ändringarna
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT }}
+          script: | 
             source /root/.nvm/nvm.sh
             nvm use v20.12.2
             cd /srv/www/formbridge
@@ -85,7 +69,7 @@ jobs:
             npm ci
             npm run build
             cd ../server
-            dotnet restore
+            dotnet restore formbridge.sln  # Korrekt sökväg till lösningsfilen
             pm2 stop formbridge
             pm2 delete formbridge
             pm2 start "dotnet run" --name formbridge
