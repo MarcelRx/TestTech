@@ -5,7 +5,7 @@ on:
     branches: ["main"]
 
 env:
-  POSTMAN_BASEURL: "http://localhost:5120"  # Updated to match your Postman environment
+  POSTMAN_BASEURL: "http://localhost:5120"
   ASPNETCORE_ENVIRONMENT: "Production"
 
 jobs:
@@ -16,65 +16,78 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Setup .NET
+      # .NET Setup
       - name: Setup .NET 8.0
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
       
-      # Setup Node.js for Newman
-      - name: Set up Node.js 22.x
+      # Node.js Setup (minimal config for Newman)
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: false
       
-      # Install Newman
+      # Newman Installation
       - name: Install Newman
-        run: npm install -g newman@7
+        run: npm install -g newman@7 --no-package-lock
       
-      # Build server
+      # Build Server
       - name: Restore dependencies
         run: dotnet restore formbridge/formbridge.sln
       
       - name: Build solution
         run: dotnet build formbridge/formbridge.sln --no-restore --configuration Release
       
-      # Start server with health check (using port 5120)
+      # Server Startup with Health Check
       - name: Start Server
         run: |
           cd formbridge/server
           nohup dotnet run --configuration Release --urls "http://0.0.0.0:5120" > server.log 2>&1 &
           
-          # Wait for server to be ready
-          echo "Waiting for server to start..."
-          timeout 60 bash -c 'until curl -s http://localhost:5120/healthcheck >/dev/null; do sleep 2; done'
-          echo "Server is ready!"
+          echo "Waiting for server startup..."
+          timeout 120 bash -c '
+            while ! curl -s http://localhost:5120/healthcheck >/dev/null; do
+              sleep 3
+              echo "Retrying health check..."
+            done'
+          echo "Server ready!"
           cat server.log
       
-      # Run API tests with proper environment
+      # Postman API Tests
       - name: Run API Tests
         run: |
-          echo "Verifying test collection exists..."
-          ls -la ./api-tests/
+          echo "=== Test Environment ==="
+          echo "Base URL: $POSTMAN_BASEURL"
           
-          # Run Newman with updated port 5120 configuration
+          # Generate environment file if not exists
+          if [ ! -f "./api-tests/postman_environment.json" ]; then
+            echo '{
+              "id": "'$(uuidgen)'",
+              "name": "CI Environment",
+              "values": [{
+                "key": "baseurl",
+                "value": "'$POSTMAN_BASEURL'",
+                "enabled": true
+              }]
+            }' > ./api-tests/postman_environment.json
+          fi
+          
           newman run ./api-tests/Test.postman_collection.json \
             --environment ./api-tests/postman_environment.json \
             --global-var "baseurl=$POSTMAN_BASEURL" \
-            --delay-request 500 \
-            --timeout-request 3000 \
             --reporters cli,json \
             --reporter-json-export ./api-tests/results.json \
-            --suppress-exit-code
+            --disable-unicode \
+            --color off
           
-          # Process results
-          echo "Test results summary:"
+          echo "=== Test Results ==="
           jq '.run.stats' ./api-tests/results.json
           
           if jq -e '.run.failures | length > 0' ./api-tests/results.json; then
-            echo "::error::API tests failed"
-            jq '.run.failures[]' ./api-tests/results.json
+            echo "::error::API Tests Failed"
+            jq '.run.failures[] | {name: .source.name, error: .error.message}' ./api-tests/results.json
             exit 1
           fi
 
@@ -91,29 +104,30 @@ jobs:
         with:
           dotnet-version: '8.0.x'
       
-      - name: Restore dependencies
-        run: dotnet restore formbridge/formbridge.sln
+      - name: Build Test Project
+        run: |
+          dotnet restore End2EndTester/End2EndTester.csproj
+          dotnet build End2EndTester/End2EndTester.csproj --configuration Release --no-restore
       
-      - name: Build test project
-        run: dotnet build End2EndTester/End2EndTester.csproj --no-restore --configuration Release
-      
-      - name: Install Playwright browsers
+      - name: Install Playwright
         run: |
           cd End2EndTester
           pwsh bin/Debug/net8.0/playwright.ps1 install --with-deps
           playwright install-deps
       
-      - name: Start server (using port 5120)
+      - name: Start Test Server
         run: |
           cd formbridge/server
           nohup dotnet run --configuration Release --urls "http://0.0.0.0:5120" &
-          sleep 10
+          sleep 15
           curl -v http://localhost:5120/healthcheck
       
-      - name: Run GUI tests
+      - name: Run GUI Tests
         run: |
           cd End2EndTester
-          dotnet test --configuration Release --no-build --logger "console;verbosity=detailed"
+          dotnet test --configuration Release --no-build --logger "console;verbosity=normal" \
+            --blame-hang-timeout 5m \
+            --blame-hang-dump-type mini
 
   deploy:
     name: Deploy to Server
@@ -122,10 +136,9 @@ jobs:
     if: success()
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       
-      - name: Deploy App
+      - name: Deploy Application
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.HOST }}
@@ -134,6 +147,8 @@ jobs:
           port: ${{ secrets.PORT }}
           script: |
             cd /srv/www/malmo/Mohsen/formbridge/
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
             dotnet publish formbridge/formbridge.sln -c Release -o ./publish
-            sudo systemctl restart your-service-name.service
+            sudo systemctl restart formbridge.service
+            echo "Deployment completed successfully"
