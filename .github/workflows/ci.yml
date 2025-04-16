@@ -62,8 +62,8 @@ jobs:
           password: ${{ secrets.PASSWORD }}
           port: ${{ secrets.PORT }}
           script: | 
-            cd /srv/www/Malmo/Mohsen # första gången
-            cd /srv/www/Mlamo/Mohsen/formbridge # andra gången 
+            cd /srv/www/malmo/Mohsen # första gången
+            cd /srv/www/malamo/Mohsen/formbridge/ # andra gången 
             git clone https://github.com/MarcelRx/TestTech.git # första gången
             git pull # andra gången
 
