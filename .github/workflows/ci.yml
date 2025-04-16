@@ -1,68 +1,130 @@
-name: CI/CD Test
+name: CI/CD Pipeline
 
 on:
   push:
     branches: ["main"]
 
+env:
+  POSTMAN_BASEURL: "http://localhost:5120"  # Updated to match your Postman environment
+  ASPNETCORE_ENVIRONMENT: "Production"
+
 jobs:
   api_tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Node.js
+      
+      # Setup .NET
+      - name: Setup .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      
+      # Setup Node.js for Newman
+      - name: Set up Node.js 22.x
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Setup dotnet
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
+          cache: 'npm'
+      
+      # Install Newman
       - name: Install Newman
-        run: npm install -g newman
+        run: npm install -g newman@7
+      
+      # Build server
       - name: Restore dependencies
         run: dotnet restore formbridge/formbridge.sln
+      
       - name: Build solution
         run: dotnet build formbridge/formbridge.sln --no-restore --configuration Release
-        continue-on-error: false
+      
+      # Start server with health check (using port 5120)
       - name: Start Server
-        if: success()
         run: |
           cd formbridge/server
-          nohup dotnet run --configuration Release &
-          sleep 10 # Wait for server to start
-      - name: Run API-Tests
-        if: success()
-        run: newman run ./api-test/Test.postman_collection.json
+          nohup dotnet run --configuration Release --urls "http://0.0.0.0:5120" > server.log 2>&1 &
+          
+          # Wait for server to be ready
+          echo "Waiting for server to start..."
+          timeout 60 bash -c 'until curl -s http://localhost:5120/healthcheck >/dev/null; do sleep 2; done'
+          echo "Server is ready!"
+          cat server.log
+      
+      # Run API tests with proper environment
+      - name: Run API Tests
+        run: |
+          echo "Verifying test collection exists..."
+          ls -la ./api-tests/
+          
+          # Run Newman with updated port 5120 configuration
+          newman run ./api-tests/Test.postman_collection.json \
+            --environment ./api-tests/postman_environment.json \
+            --global-var "baseurl=$POSTMAN_BASEURL" \
+            --delay-request 500 \
+            --timeout-request 3000 \
+            --reporters cli,json \
+            --reporter-json-export ./api-tests/results.json \
+            --suppress-exit-code
+          
+          # Process results
+          echo "Test results summary:"
+          jq '.run.stats' ./api-tests/results.json
+          
+          if jq -e '.run.failures | length > 0' ./api-tests/results.json; then
+            echo "::error::API tests failed"
+            jq '.run.failures[]' ./api-tests/results.json
+            exit 1
+          fi
 
   gui_tests:
     runs-on: ubuntu-latest
     needs: api_tests
+    timeout-minutes: 20
+    
     steps:
       - uses: actions/checkout@v4
-      - name: Setup dotnet
+      
+      - name: Setup .NET 8.0
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: '8.0.x'
+      
       - name: Restore dependencies
         run: dotnet restore formbridge/formbridge.sln
+      
       - name: Build test project
         run: dotnet build End2EndTester/End2EndTester.csproj --no-restore --configuration Release
+      
       - name: Install Playwright browsers
-        run: cd End2EndTester && pwsh bin/Debug/net8.0/playwright.ps1 install --with-deps
-      - name: Start server
+        run: |
+          cd End2EndTester
+          pwsh bin/Debug/net8.0/playwright.ps1 install --with-deps
+          playwright install-deps
+      
+      - name: Start server (using port 5120)
         run: |
           cd formbridge/server
-          nohup dotnet run --configuration Release &
-          sleep 10 # Wait for server to start
-      - name: Run GUI-tests
-        run: dotnet test End2EndTester/End2EndTester.csproj --configuration Release --no-build
+          nohup dotnet run --configuration Release --urls "http://0.0.0.0:5120" &
+          sleep 10
+          curl -v http://localhost:5120/healthcheck
+      
+      - name: Run GUI tests
+        run: |
+          cd End2EndTester
+          dotnet test --configuration Release --no-build --logger "console;verbosity=detailed"
 
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
     needs: [api_tests, gui_tests]
     if: success()
+    
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
       - name: Deploy App
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -72,5 +134,6 @@ jobs:
           port: ${{ secrets.PORT }}
           script: |
             cd /srv/www/malmo/Mohsen/formbridge/
-            git pull
+            git pull origin main
             dotnet publish formbridge/formbridge.sln -c Release -o ./publish
+            sudo systemctl restart your-service-name.service
