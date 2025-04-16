@@ -19,13 +19,19 @@ jobs:
           dotnet-version: 8.0.x
       - name: Install Newman
         run: npm install -g newman
-      - name: Install dotnet project dependencies
+      - name: Restore dependencies
         run: dotnet restore formbridge/formbridge.sln
-      - name: Build
-        run: dotnet build formbridge/formbridge.sln
+      - name: Build solution
+        run: dotnet build formbridge/formbridge.sln --no-restore --configuration Release
+        continue-on-error: false
       - name: Start Server
-        run: cd formbridge/server && nohup dotnet run &
+        if: success()
+        run: |
+          cd formbridge/server
+          nohup dotnet run --configuration Release &
+          sleep 10 # Wait for server to start
       - name: Run API-Tests
+        if: success()
         run: newman run ./api-test/Test.postman_collection.json
 
   gui_tests:
@@ -37,21 +43,25 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Install dotnet project dependencies
+      - name: Restore dependencies
         run: dotnet restore formbridge/formbridge.sln
-      - name: Build/Restore Playwright Project
-        run: dotnet build End2EndTester/End2EndTester.csproj
-      - name: Ensure browsers are installed
+      - name: Build test project
+        run: dotnet build End2EndTester/End2EndTester.csproj --no-restore --configuration Release
+      - name: Install Playwright browsers
         run: cd End2EndTester && pwsh bin/Debug/net8.0/playwright.ps1 install --with-deps
       - name: Start server
-        run: cd formbridge/server && nohup dotnet run &
+        run: |
+          cd formbridge/server
+          nohup dotnet run --configuration Release &
+          sleep 10 # Wait for server to start
       - name: Run GUI-tests
-        run: dotnet test End2EndTester/End2EndTester.csproj
+        run: dotnet test End2EndTester/End2EndTester.csproj --configuration Release --no-build
 
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
     needs: [api_tests, gui_tests]
+    if: success()
     steps:
       - name: Deploy App
         uses: appleboy/ssh-action@v1.2.0
@@ -61,7 +71,6 @@ jobs:
           password: ${{ secrets.PASSWORD }}
           port: ${{ secrets.PORT }}
           script: |
-            cd /srv/www/<malmo/Mohsen # första gången
-            cd /srv/www/malmo/Mohsen/formbridge # andra gången 
-            git clone https://github.com/MarcelRx/TestTech.git # första gången
-            git pull # andra gången
+            cd /srv/www/malmo/Mohsen/formbridge/
+            git pull
+            dotnet publish formbridge/formbridge.sln -c Release -o ./publish
